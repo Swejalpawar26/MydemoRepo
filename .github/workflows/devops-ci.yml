@@ -1,0 +1,63 @@
+name: devops-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest -v --maxfail=1
+
+  docker:
+    name: Docker build and smoke test
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t student-result-management:${{ github.sha }} .
+
+      - name: Run container smoke test
+        run: |
+          docker run -d --name student-result-management -p 5000:5000 student-result-management:${{ github.sha }}
+
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5000/health >/tmp/health.txt 2>/dev/null; then
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Container health check failed"
+              docker logs student-result-management
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl -fsS http://127.0.0.1:5000/results/101
+          docker rm -f student-result-management
